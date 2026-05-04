@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   questions,
   MBTI_INFO,
@@ -12,9 +12,6 @@ import { ProgressBar } from "./_components/ProgressBar";
 import QuestionCard from "./_components/QuestionCard";
 import ResultCard from "./_components/ResultCard";
 import AiAnalysis from "./_components/AiAnalysis";
-
-const PER_PAGE = 5;
-const TOTAL_PAGES = Math.ceil(questions.length / PER_PAGE);
 
 function calcMBTI(answers: Record<number, AnswerKey>): string {
   const s: Record<string, number> = {
@@ -45,14 +42,22 @@ function calcMBTI(answers: Record<number, AnswerKey>): string {
 
 export default function Home() {
   const [answers, setAnswers] = useState<Record<number, AnswerKey>>({});
-  const [page, setPage] = useState(0);
+  // current index into questions array (0–59)
+  const [idx, setIdx] = useState(0);
   const [result, setResult] = useState<string | null>(null);
   const [aiText, setAiText] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
 
-  const pageQuestions = questions.slice(page * PER_PAGE, (page + 1) * PER_PAGE);
-  const allAnswered = questions.every((q) => answers[q.id] !== undefined);
-  const pageComplete = pageQuestions.every((q) => answers[q.id] !== undefined);
+  const current = questions[idx];
+  const isLast = idx === questions.length - 1;
+
+  // Auto-advance 300ms after answering
+  useEffect(() => {
+    if (answers[current.id] === undefined) return;
+    if (isLast) return; // last question: wait for user to submit
+    const t = setTimeout(() => setIdx((i) => i + 1), 300);
+    return () => clearTimeout(t);
+  }, [answers, current.id, isLast]);
 
   function handleAnswer(id: number, val: AnswerKey) {
     setAnswers((prev) => ({ ...prev, [id]: val }));
@@ -68,34 +73,13 @@ export default function Home() {
       .join("\n");
 
     try {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      const res = await fetch("/api/analyze", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          max_tokens: 600,
-          messages: [
-            {
-              role: "system",
-              content: `Та MBTI мэргэжилтэн юм. Монгол хэлээр хариулна уу.
-Хэрэглэгчийн ${mbti} төрлийг 3 хэсэгт тайлбарла:
-1. 💪 Хүчтэй талууд
-2. 🌱 Хөгжих боломжтой чиглэлүүд
-3. 🎯 Карьер ба харилцааны зөвлөмж
-Тус бүрт 2-3 өгүүлбэр. Дулаан, урамшуулалтай өнгө аясаар.`,
-            },
-            {
-              role: "user",
-              content: `Миний MBTI: ${mbti}\n\n${summary}`,
-            },
-          ],
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mbti, summary }),
       });
       const data = await res.json();
-      setAiText(data.choices?.[0]?.message?.content ?? "Алдаа гарлаа.");
+      setAiText(data.text ?? "Алдаа гарлаа.");
     } catch {
       setAiText("Интернэт холболт шалгана уу.");
     }
@@ -104,11 +88,12 @@ export default function Home() {
 
   function reset() {
     setAnswers({});
-    setPage(0);
+    setIdx(0);
     setResult(null);
     setAiText(null);
   }
 
+  // ── Result screen ──────────────────────────────────────
   if (result) {
     const info = MBTI_INFO[result];
     return (
@@ -120,9 +105,11 @@ export default function Home() {
     );
   }
 
+  // ── Quiz screen ───────────────────────────────────────
   return (
     <Shell>
-      <div className="w-full max-w-2xl mx-auto">
+      <div className="w-full max-w-xl mx-auto">
+        {/* Header */}
         <div className="text-center mb-10">
           <div
             className="inline-block mb-4 px-4 py-1 rounded-full text-[11px] font-bold uppercase tracking-[0.2em]"
@@ -143,27 +130,25 @@ export default function Home() {
         </div>
 
         <ProgressBar
-          answered={Object.keys(answers).length}
+          answered={idx}
           total={questions.length}
-          currentPage={page}
-          totalPages={TOTAL_PAGES}
+          currentPage={idx}
+          totalPages={questions.length}
         />
 
-        <div className="space-y-4 mb-8">
-          {pageQuestions.map((q) => (
-            <QuestionCard
-              key={q.id}
-              question={q}
-              answer={answers[q.id]}
-              onChange={handleAnswer}
-            />
-          ))}
-        </div>
+        {/* Single question */}
+        <QuestionCard
+          key={current.id}
+          question={current}
+          answer={answers[current.id]}
+          onChange={handleAnswer}
+        />
 
-        <div className="flex gap-3">
-          {page > 0 && (
+        {/* Back button + last-question submit */}
+        <div className="flex gap-3 mt-5">
+          {idx > 0 && (
             <button
-              onClick={() => setPage((p) => p - 1)}
+              onClick={() => setIdx((i) => i - 1)}
               className="flex-1 py-4 rounded-xl font-bold text-sm uppercase tracking-widest transition-all hover:opacity-70"
               style={{ background: "#ffffff0d", color: "#ffffff66" }}
             >
@@ -171,18 +156,9 @@ export default function Home() {
             </button>
           )}
 
-          {page < TOTAL_PAGES - 1 ? (
+          {isLast && (
             <button
-              disabled={!pageComplete}
-              onClick={() => setPage((p) => p + 1)}
-              className="flex-1 py-4 rounded-xl font-bold text-sm uppercase tracking-widest transition-all disabled:opacity-25 hover:opacity-80"
-              style={{ background: "linear-gradient(135deg,#6366f1,#a78bfa)" }}
-            >
-              Дараах →
-            </button>
-          ) : (
-            <button
-              disabled={!allAnswered}
+              disabled={answers[current.id] === undefined}
               onClick={handleFinish}
               className="flex-1 py-4 rounded-xl font-bold text-sm uppercase tracking-widest transition-all disabled:opacity-25 hover:opacity-80"
               style={{ background: "linear-gradient(135deg,#6366f1,#a78bfa)" }}
@@ -191,12 +167,6 @@ export default function Home() {
             </button>
           )}
         </div>
-
-        {!pageComplete && (
-          <p className="text-center text-white/25 text-xs mt-3">
-            Хуудасны бүх асуултанд хариулна уу
-          </p>
-        )}
       </div>
     </Shell>
   );
