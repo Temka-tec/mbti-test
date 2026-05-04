@@ -1,65 +1,219 @@
-import Image from "next/image";
+"use client";
+
+import { useState } from "react";
+import {
+  questions,
+  MBTI_INFO,
+  ANSWER_WEIGHTS,
+  AnswerKey,
+  Pole,
+} from "./data/questions";
+import { ProgressBar } from "./_components/ProgressBar";
+import QuestionCard from "./_components/QuestionCard";
+import ResultCard from "./_components/ResultCard";
+import AiAnalysis from "./_components/AiAnalysis";
+
+const PER_PAGE = 5;
+const TOTAL_PAGES = Math.ceil(questions.length / PER_PAGE);
+
+function calcMBTI(answers: Record<number, AnswerKey>): string {
+  const s: Record<string, number> = {
+    E: 0,
+    I: 0,
+    S: 0,
+    N: 0,
+    T: 0,
+    F: 0,
+    J: 0,
+    P: 0,
+  };
+  for (const q of questions) {
+    const w = ANSWER_WEIGHTS[answers[q.id]];
+    if (!w) continue;
+    const pos: Pole = q.positive;
+    const neg = q.dimension.replace(pos, "") as Pole;
+    if (w > 0) s[pos] += w;
+    else s[neg] += Math.abs(w);
+  }
+  return (
+    (s.E >= s.I ? "E" : "I") +
+    (s.S >= s.N ? "S" : "N") +
+    (s.T >= s.F ? "T" : "F") +
+    (s.J >= s.P ? "J" : "P")
+  );
+}
 
 export default function Home() {
+  const [answers, setAnswers] = useState<Record<number, AnswerKey>>({});
+  const [page, setPage] = useState(0);
+  const [result, setResult] = useState<string | null>(null);
+  const [aiText, setAiText] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+
+  const pageQuestions = questions.slice(page * PER_PAGE, (page + 1) * PER_PAGE);
+  const allAnswered = questions.every((q) => answers[q.id] !== undefined);
+  const pageComplete = pageQuestions.every((q) => answers[q.id] !== undefined);
+
+  function handleAnswer(id: number, val: AnswerKey) {
+    setAnswers((prev) => ({ ...prev, [id]: val }));
+  }
+
+  async function handleFinish() {
+    const mbti = calcMBTI(answers);
+    setResult(mbti);
+    setAiLoading(true);
+
+    const summary = questions
+      .map((q) => `Q: ${q.text}\nA: ${answers[q.id]}`)
+      .join("\n");
+
+    try {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          max_tokens: 600,
+          messages: [
+            {
+              role: "system",
+              content: `Та MBTI мэргэжилтэн юм. Монгол хэлээр хариулна уу.
+Хэрэглэгчийн ${mbti} төрлийг 3 хэсэгт тайлбарла:
+1. 💪 Хүчтэй талууд
+2. 🌱 Хөгжих боломжтой чиглэлүүд
+3. 🎯 Карьер ба харилцааны зөвлөмж
+Тус бүрт 2-3 өгүүлбэр. Дулаан, урамшуулалтай өнгө аясаар.`,
+            },
+            {
+              role: "user",
+              content: `Миний MBTI: ${mbti}\n\n${summary}`,
+            },
+          ],
+        }),
+      });
+      const data = await res.json();
+      setAiText(data.choices?.[0]?.message?.content ?? "Алдаа гарлаа.");
+    } catch {
+      setAiText("Интернэт холболт шалгана уу.");
+    }
+    setAiLoading(false);
+  }
+
+  function reset() {
+    setAnswers({});
+    setPage(0);
+    setResult(null);
+    setAiText(null);
+  }
+
+  if (result) {
+    const info = MBTI_INFO[result];
+    return (
+      <Shell>
+        <ResultCard type={result} info={info} onRetry={reset}>
+          <AiAnalysis loading={aiLoading} text={aiText} color={info.color} />
+        </ResultCard>
+      </Shell>
+    );
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <Shell>
+      <div className="w-full max-w-2xl mx-auto">
+        <div className="text-center mb-10">
+          <div
+            className="inline-block mb-4 px-4 py-1 rounded-full text-[11px] font-bold uppercase tracking-[0.2em]"
+            style={{
+              background: "#6366f118",
+              color: "#818cf8",
+              border: "1px solid #6366f133",
+            }}
+          >
+            Зан чанарын тест
+          </div>
+          <h1 className="text-5xl font-extrabold tracking-tight mb-2">
+            <span style={{ color: "#818cf8" }}>MBTI</span> Тест
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="text-white/35 text-sm">
+            60 асуулт · 16 зан чанарын төрөл · AI дүн шинжилгээ
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+
+        <ProgressBar
+          answered={Object.keys(answers).length}
+          total={questions.length}
+          currentPage={page}
+          totalPages={TOTAL_PAGES}
+        />
+
+        <div className="space-y-4 mb-8">
+          {pageQuestions.map((q) => (
+            <QuestionCard
+              key={q.id}
+              question={q}
+              answer={answers[q.id]}
+              onChange={handleAnswer}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+          ))}
         </div>
-      </main>
+
+        <div className="flex gap-3">
+          {page > 0 && (
+            <button
+              onClick={() => setPage((p) => p - 1)}
+              className="flex-1 py-4 rounded-xl font-bold text-sm uppercase tracking-widest transition-all hover:opacity-70"
+              style={{ background: "#ffffff0d", color: "#ffffff66" }}
+            >
+              ← Өмнөх
+            </button>
+          )}
+
+          {page < TOTAL_PAGES - 1 ? (
+            <button
+              disabled={!pageComplete}
+              onClick={() => setPage((p) => p + 1)}
+              className="flex-1 py-4 rounded-xl font-bold text-sm uppercase tracking-widest transition-all disabled:opacity-25 hover:opacity-80"
+              style={{ background: "linear-gradient(135deg,#6366f1,#a78bfa)" }}
+            >
+              Дараах →
+            </button>
+          ) : (
+            <button
+              disabled={!allAnswered}
+              onClick={handleFinish}
+              className="flex-1 py-4 rounded-xl font-bold text-sm uppercase tracking-widest transition-all disabled:opacity-25 hover:opacity-80"
+              style={{ background: "linear-gradient(135deg,#6366f1,#a78bfa)" }}
+            >
+              Үр дүн харах ✦
+            </button>
+          )}
+        </div>
+
+        {!pageComplete && (
+          <p className="text-center text-white/25 text-xs mt-3">
+            Хуудасны бүх асуултанд хариулна уу
+          </p>
+        )}
+      </div>
+    </Shell>
+  );
+}
+
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="min-h-screen flex flex-col items-center justify-start py-16 px-4"
+      style={{
+        background: "#0d0d14",
+        fontFamily: "'Outfit', sans-serif",
+        color: "#fff",
+      }}
+    >
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap');`}</style>
+      {children}
     </div>
   );
 }
